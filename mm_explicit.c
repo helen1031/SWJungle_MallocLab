@@ -66,6 +66,9 @@ static void place(void *bp, size_t asize);
 static char* heap_listp;                                        // heap의 첫번째 포인터
 static char* free_listp;
 
+static void add_free_block(void *bp);
+static void remove_free_block(void *bp);
+
 /* 
  * mm_init - initialize the malloc package.
  */
@@ -102,14 +105,36 @@ static void *extend_heap(size_t words) {
 
     return coalesce(bp);
 }
+
+// 가장 앞에 free 함수를 추가 한다
+// 새로운 가용 블록을 리스트의 제일 앞에 추가한다
+// 새로운 블록의 successor 포인터가 현재 head가 가리키는 블록을 가리키고, 
+// head가 새로운 블록을 가리키도록 업데이트 한다
+static void add_free_block(void *bp) {
+  SUCC_LINK(bp) = free_listp;
+  PRED_LINK(free_listp) = bp;
+  PRED_LINK(bp) = NULL;
+  free_listp = bp;
+}
+
+static void remove_free_block(void *bp) {
+  if (free_listp == bp) {
+    PRED_LINK(SUCC_LINK(bp)) = NULL;
+    free_listp = SUCC_LINK(bp);
+  }
+  else {
+    SUCC_LINK(PRED_LINK(bp)) = SUCC_LINK(bp);
+    PRED_LINK(SUCC_LINK(bp)) = PRED_LINK(bp);
+  }
+}
 /* 
  * mm_malloc - Allocate a block by incrementing the brk pointer.
  *     Always allocate a block whose size is a multiple of the alignment.
  */
 void *mm_malloc(size_t size)
 {
-    size_t asize;														 // 생성할 size
-	size_t extendsize;													 // chunksize를 넘길 경우
+  size_t asize;                               // 생성할 size
+	size_t extendsize;												  // chunksize를 넘길 경우
 	char* bp;
 
 	if (size == 0)														 // 만약 입력받은 사이즈가 0 이면 무시
