@@ -84,8 +84,8 @@ int mm_init(void)
         return -1;
 
     PUT(heap_listp, 0);                                         // heap의 첫 패딩 - free(0) 값 넣어준다
-    PUT(heap_listp + (1*WSIZE), PACK(DSIZE * 2, 1));            // heap의 Prolog 헤더
-    PUT(heap_listp + (2*WSIZE), PACK(DSIZE * 2, 1));            // heap의 Prolog 푸터
+    PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1));            // heap의 Prolog 헤더
+    PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1));            // heap의 Prolog 푸터
     PUT(heap_listp + (3*WSIZE), PACK(0, 1));                    // heap의 Epilog
     heap_listp += DSIZE;
     

@@ -58,37 +58,32 @@ team_t team = {
 #define PRED_LINK(bp) (*(char **)(bp))                           // predecessor 포인터 위치
 #define SUCC_LINK(bp) (*(char **)(bp + WSIZE))                    // successor 포인터 위치
 
-#define NUM_LISTS 32                                            // 분리 가용 리스트 배열 index 수
-
 static void *extend_heap(size_t words);
 static void *coalesce(void *bp);
-static int find_index(size_t asize);
 static void *find_fit(size_t asize);
 static void place(void *bp, size_t asize);
 static void add_free_block(void *bp);
 static void remove_free_block(void *bp);
 
 static char* heap_listp;                                        // heap의 첫번째 포인터
-static char* free_array[NUM_LISTS];                             // 분리 가용 리스트 관리할 배열
-
+static char* free_listp;
 /* 
  * mm_init - initialize the malloc package.
  */
 int mm_init(void)
 {   
-    for (int i=0; i < NUM_LISTS; i++) {
-        free_array[i] = NULL;
-    }   
-
-    if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *) - 1)
+    if ((heap_listp = mem_sbrk(6*WSIZE)) == (void *) - 1)
         return -1;
 
     PUT(heap_listp, 0);                                         // heap의 첫 패딩 - free(0) 값 넣어준다
-    PUT(heap_listp + (1*WSIZE), PACK(DSIZE, 1));            // heap의 Prolog 헤더
-    PUT(heap_listp + (2*WSIZE), PACK(DSIZE, 1));            // heap의 Prolog 푸터
-    PUT(heap_listp + (3*WSIZE), PACK(0, 1));                    // heap의 Epilog
-    heap_listp += DSIZE;
+    PUT(heap_listp + (1*WSIZE), PACK(DSIZE * 2, 1));            // heap의 Prolog 헤더
+    PUT(heap_listp + (2*WSIZE), (int)NULL);                     // predcessor
+    PUT(heap_listp + (3*WSIZE), (int)NULL) ;                    // sucessor
+    PUT(heap_listp + (4*WSIZE), PACK(DSIZE * 2, 1));            // heap의 Prolog 푸터
+    PUT(heap_listp + (5*WSIZE), PACK(0, 1));                    // heap의 Epilog
     
+    free_listp = heap_listp + DSIZE;                            // free_listp가 predcessor를 가리킨다
+
     if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
         return -1;
     return 0;
@@ -114,48 +109,23 @@ static void *extend_heap(size_t words) {
 // 새로운 블록의 successor 포인터가 현재 head가 가리키는 블록을 가리키고, 
 // head가 새로운 블록을 가리키도록 업데이트 한다
 static void add_free_block(void *bp) {
-    int index = find_index(GET_SIZE(HDRP(bp)));
-
-    // 맨 처음 삽입이라면
-    if (free_array[index] == NULL) {
-        SUCC_LINK(bp) = NULL;
-        PRED_LINK(bp) = NULL;
-        free_array[index] = bp;
-    }
-    else {
-        PRED_LINK(bp) = NULL;
-        SUCC_LINK(bp) = free_array[index];
-        PRED_LINK(free_array[index]) = bp;
-        free_array[index] = bp;
-    }
+  SUCC_LINK(bp) = free_listp;
+  PRED_LINK(free_listp) = bp;
+  PRED_LINK(bp) = NULL;
+  free_listp = bp;
 }
 
 static void remove_free_block(void *bp) {
-    int index = find_index(GET_SIZE(HDRP(bp)));
-
-    // 뒷 블록을 삭제하는 경우
-    if (free_array[index] != bp) {
-        // 중간 블럭 삭제
-        if (SUCC_LINK(bp) != NULL) {
-            PRED_LINK(SUCC_LINK(bp)) = PRED_LINK(bp);
-            SUCC_LINK(PRED_LINK(bp)) = SUCC_LINK(bp);
-        }
-        // 맨 뒷 블럭 삭제 
-        else {
-            SUCC_LINK(PRED_LINK(bp)) = NULL;
-        }
-    }
     // 맨 앞 블록을 삭제하는 경우
-    else {
-    // bp 다음 블록이 존재할 경우
-        if (SUCC_LINK(bp) != NULL) {
-            PRED_LINK(SUCC_LINK(bp)) = NULL;
-            free_array[index] = SUCC_LINK(bp);
-        } else {
-            // 유일한 블록이라면
-            free_array[index] = NULL;
-        }
-    }
+  if (free_listp == bp) {
+    PRED_LINK(SUCC_LINK(bp)) = NULL;
+    free_listp = SUCC_LINK(bp);
+  }
+  // 중간 블록을 삭제하는 경우
+  else {
+    SUCC_LINK(PRED_LINK(bp)) = SUCC_LINK(bp);
+    PRED_LINK(SUCC_LINK(bp)) = PRED_LINK(bp);
+  }
 }
 /* 
  * mm_malloc - Allocate a block by incrementing the brk pointer.
@@ -189,35 +159,20 @@ void *mm_malloc(size_t size)
 	return bp;
 }
 
-static int find_index(size_t asize) {
-    int index;
-    // asize 크기로 free_array index 위치를 찾는다
-    for (index = 0; index < NUM_LISTS ; index ++) {
-        if (asize <= (1 << index)) {
-            return index;
-        }
-    }
-    return index;
-}
-
-static void * find_fit(size_t asize) {
-    int index = find_index(asize);
-    
+/*
+ * freelist만을 탐색한다
+ */
+static void *find_fit(size_t asize) {
     void *best_position = NULL;
+    void *current = free_listp;
 
-    for(int i = index; i < NUM_LISTS; i ++) {
-        void *current = free_array[i];
-
-        while (current != NULL) {
-            // 할당 가능한 블록이라면
-            if (GET_SIZE(HDRP(current)) >= asize) {
-                // 아직 최적 위치가 설정이 안됐거나, 더 최적의 블럭을 찾았다면
-                if (best_position == NULL || GET_SIZE(HDRP(current)) < GET_SIZE(HDRP(best_position))) {
-                    best_position = current;
-                }
+    while (GET_ALLOC(HDRP(current)) != 1) {
+        if (GET_SIZE(HDRP(current)) >= asize) {
+            if (best_position == NULL || GET_SIZE(HDRP(current)) < GET_SIZE(HDRP(best_position))) {
+                best_position = current;
             }
-            current = SUCC_LINK(current);
         }
+        current = SUCC_LINK(current);
     }
 
     if (best_position == NULL) {
@@ -236,15 +191,14 @@ static void place(void *bp, size_t asize) {
         PUT(HDRP(bp), PACK(current_size, 1));
         PUT(FTRP(bp), PACK(current_size, 1));
     }
-    // 넣고도 최소블럭크기 이상으로 남으면 - 분할 필요
-    // 헤더는 업데이트, 남은 블록 별도로 헤더, 푸터 처리
+    // 넣고도 최소블럭크기 이상으로 남으면 - 헤더는 업데이트, 남은 블록 별도로 헤더, 푸터 처리
     else {
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
         bp = NEXT_BLKP(bp);
         PUT(HDRP(bp), PACK(current_size - asize, 0));
         PUT(FTRP(bp), PACK(current_size - asize, 0));
-        coalesce(bp);
+        add_free_block(bp);
     }
 }
 
